@@ -12,6 +12,8 @@ from tqdm import tqdm
 import logging
 import shutil
 import tempfile
+import json
+from typing import Dict, List
 
 # Set up logging
 logging.basicConfig(filename='ollama_installer.log', level=logging.DEBUG,
@@ -56,33 +58,179 @@ def restart_as_admin():
         None, "runas", sys.executable, " ".join(sys.argv), None, 1)
     sys.exit()
 
+class ProxySelector:
+    DEFAULT_PROXIES = {
+        "Default (No Proxy)": "",
+        "GHProxy": "https://ghproxy.com/",
+        "GitHub Mirror": "https://github.moeyy.xyz/",
+        "FastGit": "https://raw.fastgit.org/",
+        "CF Worker": "https://gh.api.99988866.xyz/"
+    }
+    
+    def __init__(self, master, row: int = 1):
+        self.master = master
+        self.proxies: Dict[str, str] = self.load_proxies()
+        self.selected_proxy = tk.StringVar()
+        self.custom_proxy = tk.StringVar()
+        self.ping_results: Dict[str, float] = {}
+        
+        self.create_widgets(row)
+        
+    def create_widgets(self, row: int):
+        # Proxy selection frame
+        proxy_frame = ttk.LabelFrame(self.master, text="Proxy Settings", padding=5)
+        proxy_frame.grid(row=row, column=0, columnspan=2, pady=5, padx=10, sticky="ew")
+        
+        # Proxy dropdown
+        ttk.Label(proxy_frame, text="Select Proxy:").grid(row=0, column=0, pady=5, padx=5, sticky="w")
+        self.proxy_combo = ttk.Combobox(proxy_frame, textvariable=self.selected_proxy, width=30)
+        self.update_proxy_list()
+        self.proxy_combo.grid(row=0, column=1, columnspan=2, pady=5, padx=5, sticky="ew")
+        
+        # Custom proxy input
+        ttk.Label(proxy_frame, text="Custom Proxy:").grid(row=1, column=0, pady=5, padx=5, sticky="w")
+        custom_entry = ttk.Entry(proxy_frame, textvariable=self.custom_proxy, width=30)
+        custom_entry.grid(row=1, column=1, pady=5, padx=5, sticky="ew")
+        
+        # Add custom proxy button
+        add_btn = ttk.Button(proxy_frame, text="Add", command=self.add_custom_proxy)
+        add_btn.grid(row=1, column=2, pady=5, padx=5, sticky="e")
+        
+        # Test proxies button
+        test_btn = ttk.Button(proxy_frame, text="Test Proxies", command=self.start_proxy_test)
+        test_btn.grid(row=2, column=0, columnspan=3, pady=5, padx=5, sticky="ew")
+        
+        # Ping results
+        self.result_text = tk.Text(proxy_frame, height=4, width=40)
+        self.result_text.grid(row=3, column=0, columnspan=3, pady=5, padx=5, sticky="ew")
+        
+    def load_proxies(self) -> Dict[str, str]:
+        """Load proxies from config file or return defaults"""
+        try:
+            if os.path.exists('proxy_config.json'):
+                with open('proxy_config.json', 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading proxy config: {e}")
+        return self.DEFAULT_PROXIES.copy()
+    
+    def save_proxies(self):
+        """Save current proxy list to config file"""
+        try:
+            with open('proxy_config.json', 'w') as f:
+                json.dump(self.proxies, f, indent=2)
+        except Exception as e:
+            print(f"Error saving proxy config: {e}")
+    
+    def update_proxy_list(self):
+        """Update the proxy dropdown list"""
+        proxy_list = list(self.proxies.keys())
+        self.proxy_combo['values'] = proxy_list
+        if proxy_list:
+            self.proxy_combo.set(proxy_list[0])
+    
+    def add_custom_proxy(self):
+        """Add custom proxy to the list"""
+        custom_url = self.custom_proxy.get().strip()
+        if not custom_url:
+            return
+            
+        if not custom_url.startswith(('http://', 'https://')):
+            custom_url = 'https://' + custom_url
+            
+        if not custom_url.endswith('/'):
+            custom_url += '/'
+            
+        # Add to proxy list
+        proxy_name = f"Custom ({custom_url})"
+        self.proxies[proxy_name] = custom_url
+        self.save_proxies()
+        self.update_proxy_list()
+        self.proxy_combo.set(proxy_name)
+        self.custom_proxy.set('')  # Clear entry
+        
+    def test_proxy(self, name: str, url: str) -> float:
+        """Test a single proxy's response time"""
+          
+        test_url = f"{url}https://github.com/ByronLeeeee/Ollama-For-AMD-Installer/blob/main/requirements.txt"
+
+        try:
+            start_time = time.time()
+            response = requests.get(test_url, timeout=5)
+            if response.status_code == 200:
+                return time.time() - start_time
+        except Exception:
+            pass
+        return float('inf')
+    
+    def start_proxy_test(self):
+        """Start proxy testing in a separate thread"""
+        self.result_text.delete(1.0, tk.END)
+        self.result_text.insert(tk.END, "Testing proxies...\n")
+        threading.Thread(target=self.test_all_proxies, daemon=True).start()
+
+    
+    def test_all_proxies(self):
+        """Test all proxies and update results"""
+        self.ping_results.clear()
+        
+        for name, url in self.proxies.items():
+            response_time = self.test_proxy(name, url)
+            self.ping_results[name] = response_time
+            
+            # Update result display
+            self.master.after(0, self.update_result_display, name, response_time)
+        
+        # Sort proxies by response time
+        sorted_proxies = dict(sorted(self.ping_results.items(), key=lambda x: x[1]))
+        best_proxy = next(iter(sorted_proxies))
+        
+        # Auto-select best proxy
+        self.master.after(0, self.proxy_combo.set, best_proxy)
+        self.result_text.insert(tk.END, f"\nBest proxy: {best_proxy}\n")
+        self.result_text.insert(tk.END, f"Done!\n")
+        self.result_text.see(tk.END)
+
+    
+    def update_result_display(self, name: str, response_time: float):
+        """Update the result display with proxy test results"""
+        if response_time == float('inf'):
+            result = f"{name}: Failed\n"
+        else:
+            result = f"{name}: {response_time:.2f}s\n"
+        self.result_text.insert(tk.END, result)
+        self.result_text.see(tk.END)
+    
+    def get_selected_proxy_url(self) -> str:
+        """Get the currently selected proxy URL"""
+        proxy_name = self.selected_proxy.get()
+        return self.proxies.get(proxy_name, "")
 
 class OllamaInstallerGUI:
     def __init__(self, master):
         self.master = master
         master.title("Ollama For AMD Installer")
-        master.geometry("400x350")  # Increase height to accommodate new widgets
+        master.geometry("450x500")  
 
         self.repo = "likelovewant/ollama-for-amd"
         self.base_url = f"https://github.com/{self.repo}/releases/download"
         self.rocm_url = "https://github.com/likelovewant/ROCmLibs-for-gfx1103-AMD780M-APU/releases/download/v0.6.1.2"
 
-        self.use_proxy = tk.BooleanVar()
+        self.gpu_var = tk.StringVar()       
         self.create_widgets()
-
-        # Load saved settings
+        self.proxy_selector = ProxySelector(master, row=7) 
+        
         self.load_settings()
 
     def create_widgets(self):
-        ttk.Label(self.master, text="GPU Model:").grid(row=0, column=0, pady=5, padx=10, sticky="w")
-        self.gpu_var = tk.StringVar()
-        self.gpu_combo = ttk.Combobox(self.master, textvariable=self.gpu_var)
+            # GPU Model selection
+        gpu_frame = ttk.LabelFrame(self.master, text="GPU Settings", padding=5)
+        gpu_frame.grid(row=0, column=0, columnspan=2, pady=5, padx=10, sticky="ew")
+        
+        ttk.Label(gpu_frame, text="GPU Model:").grid(row=0, column=0, pady=5, padx=5, sticky="w")
+        self.gpu_combo = ttk.Combobox(gpu_frame, textvariable=self.gpu_var)
         self.gpu_combo['values'] = list(GPU_ROCM_MAPPING.keys())
-        self.gpu_combo.grid(row=0, column=1, pady=5, padx=10, sticky="w")
-
-        self.proxy_check = ttk.Checkbutton(
-            self.master, text="Use Proxy Mirror", variable=self.use_proxy)
-        self.proxy_check.grid(row=1, column=0, columnspan=2, pady=5, padx=10, sticky="w")
+        self.gpu_combo.grid(row=0, column=1, pady=5, padx=5, sticky="ew")
 
         self.check_button = ttk.Button(
             self.master, text="Check for New Version", command=self.check_version_thread)
@@ -107,7 +255,9 @@ class OllamaInstallerGUI:
         self.status_label.grid(row=6, column=0, columnspan=2, pady=5, padx=10, sticky="w")
 
     def get_url_with_proxy(self, url):
-        return f"https://ghp.ci/{url}" if self.use_proxy.get() else url
+        proxy_url = self.proxy_selector.get_selected_proxy_url()
+        return f"{proxy_url}{url}" if proxy_url else url
+
 
     def check_version_thread(self):
         threading.Thread(target=self.check_version, daemon=True).start()
@@ -126,7 +276,7 @@ class OllamaInstallerGUI:
             messagebox.showerror("Error", f"An unknown error occurred: {e}")
 
     def get_latest_release(self):
-        url = f"https://api.github.com/repos/{self.repo}/releases/latest"
+        url = f"https://cdn.jsdelivr.net/gh/{self.repo}/releases/latest"
         response = requests.get(url)
         response.raise_for_status()
         return response.json()["tag_name"]
@@ -234,7 +384,7 @@ class OllamaInstallerGUI:
     def extract_and_replace_rocblas(self, zip_path: str):
         rocblas_path = os.path.expandvars(
             r'%LOCALAPPDATA%\Programs\Ollama\lib\ollama')
-        library_path = os.path.join(rocblas_path, 'rocblas\library')
+        library_path = os.path.join(rocblas_path, r'rocblas\library')
 
         try:
             # Create temporary directory
@@ -308,14 +458,13 @@ class OllamaInstallerGUI:
         try:
             with open('settings.txt', 'r') as f:
                 self.gpu_var.set(f.readline().strip())
-                self.use_proxy.set(f.readline().strip() == 'True')
+                # Remove the proxy setting loading
         except FileNotFoundError:
             pass
 
     def save_settings(self):
         with open('settings.txt', 'w') as f:
             f.write(f"{self.gpu_var.get()}\n")
-            f.write(f"{self.use_proxy.get()}\n")
 
     def on_closing(self):
         self.save_settings()
@@ -323,13 +472,18 @@ class OllamaInstallerGUI:
 
 
 if __name__ == "__main__":
-    if not is_admin():
-        if messagebox.askyesno("Insufficient Permissions", "Administrator privileges are required to run this program.\nDo you want to restart as administrator?"):
-            restart_as_admin()
-        else:
-            sys.exit()
+    try:
+        if not is_admin():
+            if messagebox.askyesno("Insufficient Permissions", 
+                "Administrator privileges are required to run this program.\nDo you want to restart as administrator?"):
+                restart_as_admin()
+            else:
+                sys.exit()
 
-    root = tk.Tk()
-    app = OllamaInstallerGUI(root)
-    root.protocol("WM_DELETE_WINDOW", app.on_closing)
-    root.mainloop()
+        root = tk.Tk()
+        app = OllamaInstallerGUI(root)
+        root.protocol("WM_DELETE_WINDOW", app.on_closing)
+        root.mainloop()
+    except Exception as e:
+        logging.error(f"Critical error: {str(e)}")
+        messagebox.showerror("Error", f"Critical error occurred: {str(e)}")
