@@ -2,5 +2,5 @@ ollama_installer.log
 ollama_installer.spec
 settings.txt
 .venv/
-.dist/
-.build/
+dist/
+build/
