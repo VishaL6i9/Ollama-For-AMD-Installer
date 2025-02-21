@@ -281,7 +281,7 @@ class OllamaInstallerGUI:
         self.replace_button = ttk.Button(
             self.master,
             text="Replace ROCm Libraries Only",
-            command=self.download_and_replace_rocblas,
+            command=self.replace_only_btn_clicked,
         )
         self.replace_button.grid(row=3, column=0, pady=10, padx=10, sticky="ew")
 
@@ -320,12 +320,12 @@ class OllamaInstallerGUI:
         """Check for new version and prompt for installation."""
         try:
             self.status_label.config(text="Checking for new version...")
-            latest_version = self.get_latest_release()
+            self.latest_version = self.get_latest_release()
             if messagebox.askyesno(
-                "New Version",
-                f"New version found: {latest_version}\nDo you want to download and install?",
+                "Latest Version",
+                f"Latest version found: {self.latest_version}\nDo you want to download and install now?",
             ):
-                self.download_and_install(latest_version)
+                self.download_and_install()
         except Exception as e:
             logging.error(f"Version check failed: {e}")
             messagebox.showerror("Error", f"Version check failed: {e}")
@@ -337,17 +337,28 @@ class OllamaInstallerGUI:
         response.raise_for_status()
         return response.json()["tag_name"]
 
-    def download_and_install(self, version: str):
+    def download_and_install(self):
         """Download and install specified version."""
-        exe_url = f"{self.base_url}/{version}/OllamaSetup.exe"
+        exe_url = f"{self.base_url}/{self.latest_version}/OllamaSetup.exe"
+        libs_url = f"{self.base_url}/{self.latest_version}/ollama-windows-amd64.7z"
         if self.proxy_selector.get_selected_proxy_url():
             exe_url = f"{self.proxy_selector.get_selected_proxy_url()}{exe_url}"
+            libs_url = f"{self.proxy_selector.get_selected_proxy_url()}{libs_url}"
 
-        exe_filename = "OllamaSetup.exe"
+        exe_filename = f"{self.latest_version}/OllamaSetup.exe"
+        self.libs_filename = f"{self.latest_version}/ollama-windows-amd64.7z"
+
+        if not os.path.exists(self.latest_version):
+            os.makedirs(self.latest_version)
 
         try:
+            self.status_label.config(text=f"Downloading {exe_filename}...")
             self.download_file(exe_url, exe_filename)
+            self.status_label.config(text=f"Downloading {self.libs_filename}...")
+            self.download_file(libs_url, self.libs_filename)
+            self.status_label.config(text="Installing Ollama...")
             self.install_exe(exe_filename)
+            self.status_label.config(text="Extracting and replacing libraries...")
             self.download_and_replace_rocblas()
         except Exception as e:
             logging.error(f"Installation failed: {e}")
@@ -408,13 +419,27 @@ class OllamaInstallerGUI:
     def install_exe(self, filename: str):
         """Install downloaded executable."""
         try:
-            self.status_label.config(text="Installing...")
             self.master.update_idletasks()
             subprocess.run([filename, "/SILENT"], check=True)
-            self.status_label.config(text="OLLAMA For AMD installed successfully")
+            self.status_label.config(text="OLLAMA installed successfully")
         except subprocess.SubprocessError as e:
             logging.error(f"Installation failed: {e}")
             raise
+
+    def replace_only_btn_clicked(self):
+        """Handle replace ROCm libraries button click."""
+        self.latest_version = self.get_latest_release()
+        self.libs_filename = f"{self.latest_version}/ollama-windows-amd64.7z"
+        if not os.path.exists(self.latest_version):
+            os.makedirs(self.latest_version)
+        if not os.path.exists(self.libs_filename):
+            libs_url = f"{self.base_url}/{self.latest_version}/ollama-windows-amd64.7z"
+            if self.proxy_selector.get_selected_proxy_url():
+                libs_url = f"{self.proxy_selector.get_selected_proxy_url()}{libs_url}"
+            self.status_label.config(text=f"Downloading {self.libs_filename}...")
+            self.download_file(libs_url, self.libs_filename)
+        self.download_and_replace_rocblas()
+
 
     def download_and_replace_rocblas(self):
         """Download and replace ROCm libraries for selected GPU."""
@@ -432,14 +457,17 @@ class OllamaInstallerGUI:
             rocm_url = f"{self.proxy_selector.get_selected_proxy_url()}{rocm_url}"
 
         try:
-            local_path = os.path.join("rocblas", os.path.basename(rocm_url))
-            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            hip_rocblas_path = os.path.join("hip_rocblas", os.path.basename(rocm_url))
+            os.makedirs(os.path.dirname(hip_rocblas_path), exist_ok=True)
 
-            self.status_label.config(text="Downloading ROCm libraries...")
-            self.download_file(rocm_url, local_path)
+            if not os.path.exists(hip_rocblas_path):
+                self.status_label.config(text="Downloading ROCm libraries...")
+                self.download_file(rocm_url, hip_rocblas_path)
+            else:
+                self.status_label.config(text="ROCm libraries already downloaded")
 
             self.status_label.config(text="Extracting and replacing libraries...")
-            self.extract_and_replace_rocblas(local_path)
+            self.extract_and_replace_rocblas(hip_rocblas_path)
 
         except Exception as e:
             logging.error(f"ROCm library replacement failed: {e}")
@@ -447,39 +475,67 @@ class OllamaInstallerGUI:
 
     def extract_and_replace_rocblas(self, zip_path: str):
         """Extract and replace ROCm libraries from zip file."""
-        rocblas_path = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\lib\ollama")
-        library_path = os.path.join(rocblas_path, r"rocblas\library")
+        ollama_base_path = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama")
+        ollama_path = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\lib\ollama")
+        rocblas_dll_for_rocm_path = os.path.join(ollama_path, "rocm")
+        library_path = os.path.join(rocblas_dll_for_rocm_path, "rocblas", "library")
 
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                logging.info(f"Extracting to temporary directory: {temp_dir}")
+            temp_dir = os.path.join(self.latest_version, "temp")
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir)
+            logging.info(f"Extracting to unzip directory: {temp_dir}")
 
-                # Extract archive
-                with py7zr.SevenZipFile(zip_path, "r") as zip_ref:
-                    zip_ref.extractall(path=temp_dir)
+            # Extract archive
+            with py7zr.SevenZipFile(self.libs_filename, "r") as libs_ref:
+                libs_to_ollama_path = os.path.join(temp_dir,"windows-amd64")
+                self.status_label.config(text="Extracting ollama-windows-amd64...")
+                libs_ref.extractall(path=temp_dir)
 
-                # Verify required files
-                rocblas_dll_path = os.path.join(temp_dir, "rocblas.dll")
-                temp_library_path = os.path.join(temp_dir, "library")
+            with py7zr.SevenZipFile(zip_path, "r") as zip_ref:
+                libs_to_rocm_path = os.path.join(temp_dir,"rocm")
+                if not os.path.exists(libs_to_rocm_path):
+                    os.makedirs(libs_to_rocm_path)
+                self.status_label.config(text="Extracting ROCm libraries...")
+                zip_ref.extractall(path=libs_to_rocm_path)
 
-                if not os.path.exists(rocblas_dll_path):
-                    raise FileNotFoundError("rocblas.dll not found in archive")
-                if not os.path.exists(temp_library_path):
-                    raise FileNotFoundError("library folder not found in archive")
+            # Verify required files
+            lib_for_ollama_path = os.path.join(libs_to_ollama_path, "lib")
 
-                # Copy files
-                shutil.copy2(rocblas_dll_path, rocblas_path)
-                logging.info(f"Copied rocblas.dll to {rocblas_path}")
+            rocblas_dll_for_rocm_tempfiles_path = os.path.join(libs_to_rocm_path, "rocblas.dll")
+            library_for_rocm_tempfiles_path = os.path.join(libs_to_rocm_path, "library")
 
-                if os.path.exists(library_path):
-                    shutil.rmtree(library_path)
-                shutil.copytree(temp_library_path, library_path)
-                logging.info(f"Copied library folder to {library_path}")
+            if not os.path.exists(rocblas_dll_for_rocm_tempfiles_path):
+                raise FileNotFoundError("rocblas.dll not found in archive")
+            if not os.path.exists(library_for_rocm_tempfiles_path):
+                raise FileNotFoundError("library folder not found in archive")
 
-                self.status_label.config(text="ROCm libraries updated successfully")
-                self.status_label.config(
-                    text="Installation complete. Please restart Ollama for changes to take effect."
-                )
+            # Copy files
+            # Copy ollama-windows-amd64 to ollama base folder
+            self.status_label.config(text="Copying ollama-windows-amd64...")
+            logging.info("Copying ollama-windows-amd64")
+            # Instead of using shutil.copytree directly, you could:
+            if os.path.exists(os.path.join(ollama_base_path, "lib", "ollama", "rocm")):
+                shutil.rmtree(os.path.join(ollama_base_path, "lib", "ollama", "rocm"))
+            shutil.copytree(lib_for_ollama_path, os.path.join(ollama_base_path, "lib"), dirs_exist_ok=True)
+            logging.info(f"Copied lib to {ollama_base_path}")
+
+            # Copy rocblas.dll to rocm folder
+            self.status_label.config(text="Copying rocblas.dll...")
+            logging.info("Copying rocblas.dll")
+            shutil.copy2(rocblas_dll_for_rocm_tempfiles_path, rocblas_dll_for_rocm_path)
+            logging.info(f"Copied rocblas.dll to {rocblas_dll_for_rocm_path}")
+
+            self.status_label.config(text="Copying library folder...")
+            logging.info("Copying library folder")
+            shutil.copytree(library_for_rocm_tempfiles_path, library_path, dirs_exist_ok=True)
+            logging.info(f"Copied library folder to {library_path}")
+
+            self.status_label.config(text="ROCm libraries updated successfully")
+            self.status_label.config(
+                text="Installation complete. Please restart Ollama for changes to take effect."
+            )
+            shutil.rmtree(temp_dir)
 
         except Exception as e:
             logging.error(f"Library extraction failed: {e}")
