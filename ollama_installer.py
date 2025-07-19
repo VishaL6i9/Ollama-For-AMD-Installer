@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import requests
 import os
 import subprocess
@@ -13,6 +13,8 @@ import logging
 import shutil
 import tempfile
 import json
+import webbrowser
+import winreg
 from typing import Dict, List, Optional, Tuple
 
 # Set up logging with more detailed configuration
@@ -23,16 +25,21 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-# GPU to ROCm library mapping
+# GPU to ROCm library mapping - UPDATED with descriptive names
 GPU_ROCM_MAPPING = {
-"gfx1010:xnack-; gfx1011:xnack-; gfx1012:xnack-": "rocm.gfx1010-xnack-gfx1011-xnack-gfx1012-xnack-.for.hip.sdk.6.2.4.7z",
-"gfx1010; gfx1012 (no xnack-) ": "rocm.gfx1010-gfx1012-for.hip.sdk.6.2.4.7z",
-"gfx1031":"rocm.gfx1031.for.hip.sdk.6.2.4.littlewu.s.logic.7z",
-"gfx1032":"rocm.gfx1032.for.hip.sdk.6.2.4.navi21.logic.7z",
-"gfx1034; gfx1035; gfx1036":"rocm.gfx1034-gfx1035-gfx1036.for.hip.sdk.6.2.4.7z",
-"gfx1103":"rocm gfx1103 AMD 780M phoenix V5.0 for hip sdk 6.2.4.7z",
-"gfx1150":"rocm.gfx1150.for.hip.skd.6.2.4.7z"
+    "gfx90c-xnack- (Radeon Pro Vega)": "rocm.gfx90c-xnack-.for.hip.skd.6.2.4.7z",
+    "gfx1010/11/12 xnack (RX 5000 Series, e.g., 5700 XT)": "rocm.gfx1010-xnack-gfx1011-xnack-gfx1012-xnack-.for.hip.sdk.6.2.4.7z",
+    "gfx1010/12 no-xnack (RX 5000 Series, e.g., 5700 XT)": "rocm.gfx1010-gfx1012-for.hip.sdk.6.2.4.7z",
+    "gfx1031 (Radeon RX 6700 XT)": "rocm.gfx1031.for.hip.sdk.6.2.4.littlewu.s.logic.7z",
+    "gfx1032 (Radeon RX 6600 XT)": "rocm.gfx1032.for.hip.sdk.6.2.4.navi21.logic.7z",
+    "gfx1034/35/36 (APUs: Steam Deck, Ryzen 6000 'Rembrandt')": "rocm.gfx1034-gfx1035-gfx1036.for.hip.sdk.6.2.4.7z",
+    "gfx1103 (APUs: Ryzen 7040/8040 'Phoenix', e.g., 780M)": "rocm.gfx1103.AMD.780M.phoenix.V5.0.for.hip.sdk.6.2.4.7z",
+    "gfx1150 (APUs: Ryzen AI 300 'Strix Point')": "rocm.gfx1150.for.hip.skd.6.2.4.7z",
+    "gfx1151 (APUs: Ryzen AI 300 'Strix Point')": "rocm.gfx1151.for.hip.skd.6.2.4.7z",
+    "gfx1200 (Radeon 9000 Series 'Navi 48')": "rocm.gfx1200.for.rocm.6.2.4-no-optimized.7z",
+    "gfx1201 (Radeon 9000 Series 'Navi 44')": "rocm.gfx1201.for.hip.skd.6.2.4-no-optimized.7z"
 }
+
 
 BASE_URL = "https://github.com/likelovewant/ROCmLibs-for-gfx1103-AMD780M-APU/releases/download/v0.6.2.4/"
 
@@ -71,54 +78,57 @@ class ProxySelector:
         "CF Worker": "https://gh.api.99988866.xyz/"
     }
 
-    def __init__(self, master, row: int = 1):
+    def __init__(self, master):
         """Initialize proxy selector component."""
         self.master = master
         self.proxies: Dict[str, str] = self.load_proxies()
         self.selected_proxy = tk.StringVar(value="Default (No Proxy)")
         self.custom_proxy = tk.StringVar()
         self.ping_results: Dict[str, float] = {}
-        self.create_widgets(row)
+        self.placeholder = "e.g., https://proxy.example.com/"
+        self.create_widgets()
 
-    def create_widgets(self, row: int):
+    def create_widgets(self):
         """Create and layout proxy selector GUI components."""
+        self.proxy_frame = ttk.LabelFrame(self.master, text="Proxy Settings", padding=(10, 5))
+        self.proxy_frame.grid(row=2, column=0, columnspan=2, pady=(10, 5), padx=10, sticky="ew")
+        self.proxy_frame.columnconfigure(1, weight=1)
 
-        # Proxy settings frame
-        proxy_frame = ttk.LabelFrame(self.master, text="Proxy Settings", padding=5)
-        proxy_frame.grid(row=row, column=0, columnspan=2, pady=5, padx=10, sticky="ew")
-
-        # Proxy selection dropdown
-        ttk.Label(proxy_frame, text="Select Proxy:").grid(
-            row=0, column=0, pady=5, padx=5, sticky="w"
-        )
-        self.proxy_combo = ttk.Combobox(
-            proxy_frame, textvariable=self.selected_proxy, width=30
-        )
+        ttk.Label(self.proxy_frame, text="Select Proxy:").grid(row=0, column=0, pady=5, padx=5, sticky="w")
+        self.proxy_combo = ttk.Combobox(self.proxy_frame, textvariable=self.selected_proxy)
         self.update_proxy_list()
-        self.proxy_combo.grid(
-            row=0, column=1, columnspan=2, pady=5, padx=5, sticky="ew"
-        )
+        self.proxy_combo.grid(row=0, column=1, columnspan=2, pady=5, padx=5, sticky="ew")
 
-        # Custom proxy entry
-        ttk.Label(proxy_frame, text="Custom Proxy:").grid(
-            row=1, column=0, pady=5, padx=5, sticky="w"
-        )
-        custom_entry = ttk.Entry(proxy_frame, textvariable=self.custom_proxy, width=30)
-        custom_entry.grid(row=1, column=1, pady=5, padx=5, sticky="ew")
+        ttk.Label(self.proxy_frame, text="Custom Proxy:").grid(row=1, column=0, pady=5, padx=5, sticky="w")
+        self.custom_entry = ttk.Entry(self.proxy_frame, textvariable=self.custom_proxy)
+        self.custom_entry.grid(row=1, column=1, pady=5, padx=5, sticky="ew")
+        
+        # Placeholder logic
+        self.custom_entry.insert(0, self.placeholder)
+        self.custom_entry.config(foreground="grey")
+        self.custom_entry.bind("<FocusIn>", self.on_entry_focus_in)
+        self.custom_entry.bind("<FocusOut>", self.on_entry_focus_out)
 
-        # Add custom proxy button
-        add_btn = ttk.Button(proxy_frame, text="Add", command=self.add_custom_proxy)
+        add_btn = ttk.Button(self.proxy_frame, text="Add", command=self.add_custom_proxy)
         add_btn.grid(row=1, column=2, pady=5, padx=5, sticky="e")
 
-        # Test proxies button
-        test_btn = ttk.Button(proxy_frame, text="Test Proxies", command=self.start_proxy_test)
+        test_btn = ttk.Button(self.proxy_frame, text="Test Proxies", command=self.start_proxy_test)
         test_btn.grid(row=2, column=0, columnspan=3, pady=5, padx=5, sticky="ew")
 
-        # Ping results
-        self.result_text = tk.Text(proxy_frame, height=4, width=40)
-        self.result_text.grid(
-            row=3, column=0, columnspan=3, pady=5, padx=5, sticky="ew"
-        )
+        self.result_text = tk.Text(self.proxy_frame, height=4)
+        self.result_text.grid(row=3, column=0, columnspan=3, pady=(5,0), padx=5, sticky="ew")
+
+    def on_entry_focus_in(self, event):
+        """Handle focus in on custom proxy entry to remove placeholder."""
+        if self.custom_entry.get() == self.placeholder:
+            self.custom_entry.delete(0, tk.END)
+            self.custom_entry.config(foreground="black")
+
+    def on_entry_focus_out(self, event):
+        """Handle focus out on custom proxy entry to restore placeholder if empty."""
+        if not self.custom_entry.get():
+            self.custom_entry.insert(0, self.placeholder)
+            self.custom_entry.config(foreground="grey")
 
     def update_proxy_list(self):
         """Update the proxy dropdown list."""
@@ -131,18 +141,17 @@ class ProxySelector:
         """Get currently selected proxy URL."""
         proxy_name = self.selected_proxy.get()
         if proxy_name == "Default (No Proxy)":
-            return None
-        return self.proxies.get(proxy_name)
+            return ""
+        return self.proxies.get(proxy_name, "")
 
     def add_custom_proxy(self):
         """Add custom proxy URL to available proxies."""
         custom_url = self.custom_proxy.get().strip()
-        if not custom_url:
+        if not custom_url or custom_url == self.placeholder:
             return
 
         if not custom_url.startswith(("http://", "https://")):
             custom_url = "https://" + custom_url
-
         if not custom_url.endswith("/"):
             custom_url += "/"
 
@@ -152,6 +161,7 @@ class ProxySelector:
         self.update_proxy_list()
         self.proxy_combo.set(proxy_name)
         self.custom_proxy.set("")
+        self.on_entry_focus_out(None) # Restore placeholder
 
     def load_proxies(self) -> Dict[str, str]:
         """Load saved proxies from config file."""
@@ -169,26 +179,23 @@ class ProxySelector:
     def save_proxies(self):
         """Save current proxy list to config file."""
         try:
-            save_proxies = {
-                k: v for k, v in self.proxies.items() if k != "Default (No Proxy)"
-            }
+            save_proxies = {k: v for k, v in self.proxies.items() if "Default" not in k}
             with open("proxy_config.json", "w") as f:
                 json.dump(save_proxies, f, indent=2)
         except Exception as e:
             logging.error(f"Error saving proxy config: {e}")
 
     def test_proxy(self, name: str, url: str) -> float:
-            """Test a single proxy's response time"""
-            
-            test_url = f"{url}https://github.com/ByronLeeeee/Ollama-For-AMD-Installer/blob/main/requirements.txt"
-
-            try:
-                start_time = time.time()
-                response = requests.get(test_url, timeout=5)
-                if response.status_code == 200:
-                    return time.time() - start_time
-            except Exception:
-                pass
+        """Test a single proxy's response time"""
+        test_url = f"{url}https://github.com/ByronLeeeee/Ollama-For-AMD-Installer/blob/main/requirements.txt"
+        if name == "Default (No Proxy)":
+            test_url = "https://github.com/ByronLeeeee/Ollama-For-AMD-Installer/blob/main/requirements.txt"
+        try:
+            start_time = time.time()
+            response = requests.get(test_url, timeout=5)
+            response.raise_for_status()
+            return time.time() - start_time
+        except Exception:
             return float('inf')
 
     def start_proxy_test(self):
@@ -197,113 +204,130 @@ class ProxySelector:
         self.result_text.insert(tk.END, "Testing proxies...\n")
         threading.Thread(target=self.test_all_proxies, daemon=True).start()
 
-    
     def test_all_proxies(self):
         """Test all proxies and update results"""
         self.ping_results.clear()
-        
         for name, url in self.proxies.items():
             response_time = self.test_proxy(name, url)
             self.ping_results[name] = response_time
-            
-            # Update result display
             self.master.after(0, self.update_result_display, name, response_time)
         
-        # Sort proxies by response time
         sorted_proxies = dict(sorted(self.ping_results.items(), key=lambda x: x[1]))
-        best_proxy = next(iter(sorted_proxies))
-        
-        # Auto-select best proxy
-        self.master.after(0, self.proxy_combo.set, best_proxy)
-        self.result_text.insert(tk.END, f"\nBest proxy: {best_proxy}\n")
+        if sorted_proxies:
+            best_proxy = next(iter(sorted_proxies))
+            self.master.after(0, self.proxy_combo.set, best_proxy)
+            self.result_text.insert(tk.END, f"\nBest proxy: {best_proxy}\n")
+            
         self.result_text.insert(tk.END, f"Done!\n")
         self.result_text.see(tk.END)
 
-    
     def update_result_display(self, name: str, response_time: float):
         """Update the result display with proxy test results"""
-        if response_time == float('inf'):
-            result = f"{name}: Failed\n"
-        else:
-            result = f"{name}: {response_time:.2f}s\n"
+        result = f"{name}: Failed\n" if response_time == float('inf') else f"{name}: {response_time:.2f}s\n"
         self.result_text.insert(tk.END, result)
         self.result_text.see(tk.END)
-    
-    def get_selected_proxy_url(self) -> str:
-        """Get the currently selected proxy URL"""
-        proxy_name = self.selected_proxy.get()
-        return self.proxies.get(proxy_name, "")
 
 class OllamaInstallerGUI:
     """Main GUI application for Ollama installation and management."""
-
     def __init__(self, master):
         """Initialize main application GUI."""
         self.master = master
         master.title("Ollama For AMD Installer")
-        master.geometry("450x520")
+        master.geometry("700x650")
+        master.columnconfigure(0, weight=1)
 
         self.repo = "likelovewant/ollama-for-amd"
         self.base_url = f"https://github.com/{self.repo}/releases/download"
-
+        self.github_url = "https://github.com/ByronLeeeee/Ollama-For-AMD-Installer"
         self.gpu_var = tk.StringVar()
         self.create_widgets()
-        self.proxy_selector = ProxySelector(master, row=7)
-
+        self.proxy_selector = ProxySelector(master)
         self.load_settings()
 
     def create_widgets(self):
         """Create and layout main application GUI components."""
-        gpu_frame = ttk.LabelFrame(self.master, text="GPU Settings", padding=5)
-        gpu_frame.grid(row=0, column=0, columnspan=2, pady=5, padx=10, sticky="ew")
-
-        ttk.Label(gpu_frame, text="GPU Model:").grid(
-            row=0, column=0, pady=5, padx=5, sticky="w"
-        )
-        self.gpu_combo = ttk.Combobox(gpu_frame, textvariable=self.gpu_var)
-        self.gpu_combo["values"] = list(GPU_ROCM_MAPPING.keys())
+        # --- GPU Selection Frame ---
+        gpu_frame = ttk.LabelFrame(self.master, text="GPU Selection", padding=(10, 5))
+        gpu_frame.grid(row=0, column=0, columnspan=2, pady=10, padx=10, sticky="ew")
+        gpu_frame.columnconfigure(1, weight=1)
+        ttk.Label(gpu_frame, text="GPU Model:").grid(row=0, column=0, pady=5, padx=5, sticky="w")
+        self.gpu_combo = ttk.Combobox(gpu_frame, textvariable=self.gpu_var, values=list(GPU_ROCM_MAPPING.keys()))
         self.gpu_combo.grid(row=0, column=1, pady=5, padx=5, sticky="ew")
 
-        self.check_button = ttk.Button(
-            self.master, text="Check for New Version", command=self.check_version_thread
-        )
-        self.check_button.grid(
-            row=2, column=0, columnspan=2, pady=10, padx=10, sticky="ew"
-        )
+        # --- Main Actions Frame ---
+        actions_frame = ttk.LabelFrame(self.master, text="Main Actions", padding=(10, 5))
+        actions_frame.grid(row=1, column=0, columnspan=2, pady=5, padx=10, sticky="ew")
+        actions_frame.columnconfigure(0, weight=1)
+        self.check_button = ttk.Button(actions_frame, text="Download and Install Latest Ollama", command=self.check_version_thread)
+        self.check_button.grid(row=0, column=0, pady=5, padx=5, sticky="ew")
+        self.replace_button = ttk.Button(actions_frame, text="Replace ROCm Libraries Only", command=self.replace_only_btn_clicked)
+        self.replace_button.grid(row=1, column=0, pady=5, padx=5, sticky="ew")
 
-        self.replace_button = ttk.Button(
-            self.master,
-            text="Replace ROCm Libraries Only",
-            command=self.replace_only_btn_clicked,
-        )
-        self.replace_button.grid(row=3, column=0, pady=10, padx=10, sticky="ew")
+        # --- Troubleshooting Frame ---
+        troubleshoot_frame = ttk.LabelFrame(self.master, text="Troubleshooting", padding=(10, 5))
+        troubleshoot_frame.grid(row=3, column=0, columnspan=2, pady=5, padx=10, sticky="ew")
+        troubleshoot_frame.columnconfigure(0, weight=1)
+        self.fix_button = ttk.Button(troubleshoot_frame, text="Fix 0xc0000005 Error", command=self.fix_05Error)
+        self.fix_button.grid(row=0, column=0, pady=5, padx=5, sticky="ew")
 
-        self.fix_button = ttk.Button(
-            self.master, text="Fix 0xc0000005 Error", command=self.fix_05Error
-        )
-        self.fix_button.grid(row=3, column=1, pady=10, padx=10, sticky="ew")
+        # --- Status and Progress ---
+        status_frame = ttk.Frame(self.master, padding=(10, 5))
+        status_frame.grid(row=4, column=0, columnspan=2, pady=10, padx=10, sticky="ew")
+        status_frame.columnconfigure(0, weight=1)
+        self.progress = ttk.Progressbar(status_frame, length=300, mode="determinate")
+        self.progress.grid(row=0, column=0, columnspan=2, pady=(5,0), sticky="ew")
+        self.speed_label = ttk.Label(status_frame, text="")
+        self.speed_label.grid(row=1, column=0, pady=(5,0), sticky="w")
+        self.status_label = ttk.Label(status_frame, text="Ready.")
+        self.status_label.grid(row=2, column=0, pady=(5,0), sticky="w")
+        
+        # --- Footer ---
+        footer_frame = ttk.Frame(self.master)
+        footer_frame.grid(row=5, column=0, columnspan=2, padx=10, sticky="se")
+        self.master.rowconfigure(5, weight=1)
+        
+        # Clickable GitHub Link
+        link_label = tk.Label(footer_frame, text="GitHub:", font=("Arial", 8), fg="black")
+        link_label.pack(side="left", pady=(10,5))
+        self.source_label = tk.Label(footer_frame, text=self.github_url.split("/")[-2] + "/" + self.github_url.split("/")[-1], font=("Arial", 8, "underline"), fg="blue", cursor="hand2")
+        self.source_label.pack(side="left", pady=(10,5))
+        self.source_label.bind("<Button-1>", self.open_github_link)
 
-        self.progress = ttk.Progressbar(self.master, length=300, mode="determinate")
-        self.progress.grid(row=4, column=0, columnspan=2, pady=10, padx=10, sticky="ew")
+    def find_ollama_path(self) -> Optional[str]:
+        """Find the Ollama installation path automatically or by asking the user."""
+        # 1. Check Windows Registry
+        try:
+            hkey = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Ollama")
+            install_path = winreg.QueryValueEx(hkey, "InstallLocation")[0]
+            winreg.CloseKey(hkey)
+            if os.path.exists(install_path):
+                logging.info(f"Found Ollama via registry: {install_path}")
+                return install_path
+        except FileNotFoundError:
+            logging.warning("Ollama not found in HKLM Uninstall registry key.")
+        except Exception as e:
+            logging.error(f"Error reading registry: {e}")
 
-        self.speed_label = ttk.Label(self.master, text="Download Speed: 0 KB/s")
-        self.speed_label.grid(
-            row=5, column=0, columnspan=2, pady=5, padx=10, sticky="w"
-        )
+        # 2. Check default path
+        default_path = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama")
+        if os.path.exists(default_path):
+            logging.info(f"Found Ollama at default path: {default_path}")
+            return default_path
 
-        self.status_label = ttk.Label(self.master, text="")
-        self.status_label.grid(
-            row=6, column=0, columnspan=2, pady=5, padx=10, sticky="w"
-        )
+        # 3. Ask the user
+        if messagebox.askokcancel("Ollama Not Found", "Could not automatically locate the Ollama installation directory. Would you like to select it manually?"):
+            user_path = filedialog.askdirectory(title="Please select your Ollama installation folder")
+            if user_path and os.path.exists(os.path.join(user_path, "ollama.exe")):
+                logging.info(f"User selected Ollama path: {user_path}")
+                return user_path
+        
+        messagebox.showerror("Error", "Ollama installation path could not be determined. Cannot continue.")
+        return None
 
-        self.source_label = ttk.Label(
-            self.master,
-            text="Github: ByronLeeeee/Ollama-For-AMD-Installer",
-            font=("Arial", 8),
-        )
-        self.source_label.grid(
-            row=8, column=0, columnspan=2, pady=5, padx=10, sticky="se"
-        )
+
+    def open_github_link(self, event=None):
+        """Open the project's GitHub page in a web browser."""
+        webbrowser.open_new_tab(self.github_url)
 
     def check_version_thread(self):
         """Start version check in separate thread."""
@@ -314,14 +338,12 @@ class OllamaInstallerGUI:
         try:
             self.status_label.config(text="Checking for new version...")
             self.latest_version = self.get_latest_release()
-            if messagebox.askyesno(
-                "Latest Version",
-                f"Latest version found: {self.latest_version}\nDo you want to download and install now?",
-            ):
+            if messagebox.askyesno("Latest Version", f"Latest version found: {self.latest_version}\nDo you want to download and install now?"):
                 self.download_and_install()
         except Exception as e:
             logging.error(f"Version check failed: {e}")
             messagebox.showerror("Error", f"Version check failed: {e}")
+            self.status_label.config(text="Error checking version.")
 
     def get_latest_release(self) -> str:
         """Get latest release version from GitHub API."""
@@ -333,23 +355,14 @@ class OllamaInstallerGUI:
     def download_and_install(self):
         """Download and install specified version."""
         exe_url = f"{self.base_url}/{self.latest_version}/OllamaSetup.exe"
-        # Seems like ollama-windows-amd64.7z is not needed for the installation process, so it's commented out.
-        # libs_url = f"{self.base_url}/{self.latest_version}/ollama-windows-amd64.7z"
-        if self.proxy_selector.get_selected_proxy_url():
-            exe_url = f"{self.proxy_selector.get_selected_proxy_url()}{exe_url}"
-            # libs_url = f"{self.proxy_selector.get_selected_proxy_url()}{libs_url}"
-
-        exe_filename = f"{self.latest_version}/OllamaSetup.exe"
-        # self.libs_filename = f"{self.latest_version}/ollama-windows-amd64.7z"
-
-        if not os.path.exists(self.latest_version):
-            os.makedirs(self.latest_version)
-
+        proxy_url = self.proxy_selector.get_selected_proxy_url()
+        if proxy_url:
+            exe_url = f"{proxy_url}{exe_url}"
+        exe_filename = os.path.join(self.latest_version, "OllamaSetup.exe")
+        os.makedirs(self.latest_version, exist_ok=True)
         try:
-            self.status_label.config(text=f"Downloading {exe_filename}...")
+            self.status_label.config(text=f"Downloading {os.path.basename(exe_filename)}...")
             self.download_file(exe_url, exe_filename)
-            # self.status_label.config(text=f"Downloading {self.libs_filename}...")
-            # self.download_file(libs_url, self.libs_filename)
             self.status_label.config(text="Installing Ollama...")
             self.install_exe(exe_filename)
             self.status_label.config(text="Extracting and replacing libraries...")
@@ -357,236 +370,166 @@ class OllamaInstallerGUI:
         except Exception as e:
             logging.error(f"Installation failed: {e}")
             messagebox.showerror("Error", f"Installation failed: {e}")
+            self.status_label.config(text="Installation failed.")
 
     def download_file(self, url: str, filename: str):
         """Download file with progress tracking."""
         try:
             response = requests.get(url, stream=True)
+            response.raise_for_status()
             total_size = int(response.headers.get("content-length", 0))
-
             if total_size == 0:
-                raise ValueError("Invalid file size")
-
+                raise ValueError("Content-Length header is missing or zero.")
             block_size = 1024
             written = 0
             start_time = time.time()
-
-            with open(filename, "wb") as file, tqdm(
-                total=total_size, unit="iB", unit_scale=True
-            ) as progress_bar:
+            with open(filename, "wb") as file, tqdm(total=total_size, unit="iB", unit_scale=True, desc=os.path.basename(filename)) as progress_bar:
                 for data in response.iter_content(block_size):
                     size = file.write(data)
                     written += size
                     progress_bar.update(size)
                     self.update_progress(written, total_size)
                     self.update_speed(written, start_time)
-
+            self.speed_label.config(text="")
         except Exception as e:
-            logging.error(f"Download failed: {e}")
+            logging.error(f"Download failed for {url}: {e}")
             if os.path.exists(filename):
                 os.remove(filename)
             raise
 
     def update_progress(self, current: int, total: int):
         """Update progress bar."""
-        try:
-            progress = int((current / total) * 100)
-            self.progress["value"] = progress
+        if total > 0:
+            self.progress["value"] = int((current / total) * 100)
             self.master.update_idletasks()
-        except Exception as e:
-            logging.error(f"Progress update failed: {e}")
 
     def update_speed(self, downloaded: int, start_time: float):
         """Update download speed display."""
-        try:
-            elapsed_time = time.time() - start_time
-            if elapsed_time < 0.001:
-                speed_text = "Calculating speed..."
-            else:
-                speed = downloaded / (1024 * elapsed_time)
-                speed_text = f"Download Speed: {speed:.2f} KB/s"
-            self.speed_label.config(text=speed_text)
+        elapsed_time = time.time() - start_time
+        if elapsed_time > 0.5:
+            speed = downloaded / (1024 * elapsed_time)
+            self.speed_label.config(text=f"Speed: {speed:.2f} KB/s")
             self.master.update_idletasks()
-        except Exception as e:
-            logging.error(f"Speed update failed: {e}")
 
     def install_exe(self, filename: str):
         """Install downloaded executable."""
         try:
             self.master.update_idletasks()
             subprocess.run([filename, "/SILENT"], check=True)
-            self.status_label.config(text="OLLAMA installed successfully")
-        except subprocess.SubprocessError as e:
+            self.status_label.config(text="OLLAMA installed successfully.")
+        except (subprocess.SubprocessError, FileNotFoundError) as e:
             logging.error(f"Installation failed: {e}")
             raise
 
     def replace_only_btn_clicked(self):
         """Handle replace ROCm libraries button click."""
-        self.latest_version = self.get_latest_release()
-        # self.libs_filename = f"{self.latest_version}/ollama-windows-amd64.7z"
-        if not os.path.exists(self.latest_version):
-            os.makedirs(self.latest_version)
-        # if not os.path.exists(self.libs_filename):
-        #     libs_url = f"{self.base_url}/{self.latest_version}/ollama-windows-amd64.7z"
-        #     if self.proxy_selector.get_selected_proxy_url():
-        #         libs_url = f"{self.proxy_selector.get_selected_proxy_url()}{libs_url}"
-        #     self.status_label.config(text=f"Downloading {self.libs_filename}...")
-        #     self.download_file(libs_url, self.libs_filename)
-        self.download_and_replace_rocblas()
-
+        self.status_label.config(text="Starting ROCm library replacement...")
+        try:
+            self.latest_version = self.get_latest_release()
+            os.makedirs(self.latest_version, exist_ok=True)
+            self.download_and_replace_rocblas()
+        except Exception as e:
+            logging.error(f"ROCm replacement failed: {e}")
+            messagebox.showerror("Error", f"Failed to get latest release info: {e}")
+            self.status_label.config(text="Error replacing ROCm libraries.")
 
     def download_and_replace_rocblas(self):
         """Download and replace ROCm libraries for selected GPU."""
         self.gpu_model = self.gpu_var.get()
         if not self.gpu_model:
-            messagebox.showerror("Error", "Please select a GPU model first")
+            messagebox.showerror("Error", "Please select a GPU model first.")
             return
 
-        self.rocm_url = get_rocm_url(self.gpu_model)
-        if not self.rocm_url:
+        rocm_url = get_rocm_url(self.gpu_model)
+        if not rocm_url:
             messagebox.showerror("Error", f"No ROCm file found for {self.gpu_model}")
             return
-
-        if self.proxy_selector.get_selected_proxy_url():
-            self.rocm_url = f"{self.proxy_selector.get_selected_proxy_url()}{self.rocm_url}"
-
+        
+        proxy_url = self.proxy_selector.get_selected_proxy_url()
+        if proxy_url:
+            rocm_url = f"{proxy_url}{rocm_url}"
+        
         try:
-            hip_rocblas_path = os.path.join("hip_rocblas", os.path.basename(self.rocm_url))
-            os.makedirs(os.path.dirname(hip_rocblas_path), exist_ok=True)
-
-            if not os.path.exists(hip_rocblas_path):
-                self.status_label.config(text="Downloading ROCm libraries...")
-                self.download_file(self.rocm_url, hip_rocblas_path)
+            rocm_filename = os.path.basename(rocm_url)
+            rocm_zip_path = os.path.join(self.latest_version, rocm_filename)
+            if not os.path.exists(rocm_zip_path):
+                self.status_label.config(text=f"Downloading {rocm_filename}...")
+                self.download_file(rocm_url, rocm_zip_path)
             else:
-                self.status_label.config(text="ROCm libraries already downloaded")
-
+                self.status_label.config(text="ROCm libraries already downloaded.")
             self.status_label.config(text="Extracting and replacing libraries...")
-            self.extract_and_replace_rocblas(hip_rocblas_path)
-
+            self.extract_and_replace_rocblas(rocm_zip_path)
         except Exception as e:
             logging.error(f"ROCm library replacement failed: {e}")
             messagebox.showerror("Error", f"ROCm library replacement failed: {e}")
+            self.status_label.config(text="Error replacing ROCm libraries.")
 
     def extract_and_replace_rocblas(self, zip_path: str):
         """Extract and replace ROCm libraries from zip file."""
-        ollama_base_path = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama")
-        ollama_path = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\lib\ollama")
-        rocblas_dll_for_rocm_path = os.path.join(ollama_path, "rocm")
+        ollama_base_path = self.find_ollama_path()
+        if not ollama_base_path:
+            self.status_label.config(text="Ollama not found. Aborted.")
+            return
+
+        rocblas_dll_for_rocm_path = os.path.join(ollama_base_path, "lib", "ollama", "rocm")
         library_path = os.path.join(rocblas_dll_for_rocm_path, "rocblas", "library")
-
+        temp_dir = tempfile.mkdtemp()
         try:
-            temp_dir = os.path.join(self.latest_version, "temp")
-            if not os.path.exists(temp_dir):
-                os.makedirs(temp_dir)
-            print(f"Extracting to unzip directory: {temp_dir}")
-
-            # Seems like ollama-windows-amd64.7z is not needed for the installation process, so it's commented out.
-            # Extract archive
-            # with py7zr.SevenZipFile(self.libs_filename, "r") as libs_ref:
-            #     libs_to_ollama_path = os.path.join(temp_dir,"windows-amd64")
-            #     self.status_label.config(text="Extracting ollama-windows-amd64...")
-            #     libs_ref.extractall(path=temp_dir)
-
+            self.status_label.config(text=f"Extracting {os.path.basename(zip_path)}...")
             with py7zr.SevenZipFile(zip_path, "r") as zip_ref:
-                libs_to_rocm_path = os.path.join(temp_dir,"rocm")
-                if not os.path.exists(libs_to_rocm_path):
-                    os.makedirs(libs_to_rocm_path)
-                self.status_label.config(text="Extracting ROCm libraries...")
-                zip_ref.extractall(path=libs_to_rocm_path)
-            extracted_folders = [f for f in os.listdir(libs_to_rocm_path) if os.path.isdir(os.path.join(libs_to_rocm_path, f))]
-            rocm_folder = next((f for f in extracted_folders if "rocm" in f), None)
+                zip_ref.extractall(path=temp_dir)
 
-            if rocm_folder:
-                libs_to_rocm_path = os.path.join(libs_to_rocm_path, rocm_folder)
-            else:
-                raise FileNotFoundError(f"rocm folder not found in {libs_to_rocm_path}")
-            # Verify required files
-            # lib_for_ollama_path = os.path.join(libs_to_ollama_path, "lib")
+            extracted_content_path = temp_dir
+            if len(os.listdir(temp_dir)) == 1:
+                nested_dir = os.path.join(temp_dir, os.listdir(temp_dir)[0])
+                if os.path.isdir(nested_dir):
+                    extracted_content_path = nested_dir
+            
+            rocblas_dll_src = os.path.join(extracted_content_path, "rocblas.dll")
+            library_src = os.path.join(extracted_content_path, "library")
+            if not os.path.exists(rocblas_dll_src): raise FileNotFoundError("rocblas.dll not found in the extracted archive.")
+            if not os.path.exists(library_src): raise FileNotFoundError("'library' folder not found in the extracted archive.")
 
-            rocblas_dll_for_rocm_tempfiles_path = os.path.join(libs_to_rocm_path, "rocblas.dll")
-            library_for_rocm_tempfiles_path = os.path.join(libs_to_rocm_path, "library")
+            os.makedirs(rocblas_dll_for_rocm_path, exist_ok=True)
+            os.makedirs(library_path, exist_ok=True)
 
-            if not os.path.exists(rocblas_dll_for_rocm_tempfiles_path):
-                raise FileNotFoundError("rocblas.dll not found in archive")
-            if not os.path.exists(library_for_rocm_tempfiles_path):
-                raise FileNotFoundError("library folder not found in archive")
-
-            # Copy files
-            # Copy ollama-windows-amd64 to ollama base folder
-            # self.status_label.config(text="Copying ollama-windows-amd64...")
-            # print("Copying ollama-windows-amd64")
-            # # Instead of using shutil.copytree directly, you could:
-            # if os.path.exists(os.path.join(ollama_base_path, "lib", "ollama", "rocm")):
-            #     shutil.rmtree(os.path.join(ollama_base_path, "lib", "ollama", "rocm"))
-            # shutil.copytree(lib_for_ollama_path, os.path.join(ollama_base_path, "lib"), dirs_exist_ok=True)
-            # print(f"Copied lib to {ollama_base_path}")
-
-            # Copy rocblas.dll to rocm folder
             self.status_label.config(text="Copying rocblas.dll...")
-            print("Copying rocblas.dll")
-            shutil.copy2(rocblas_dll_for_rocm_tempfiles_path, rocblas_dll_for_rocm_path)
-            print(f"Copied rocblas.dll to {rocblas_dll_for_rocm_path}")
-
-            # Copy library folder to rocm/rocblas
+            shutil.copy2(rocblas_dll_src, rocblas_dll_for_rocm_path)
             self.status_label.config(text="Copying library folder...")
-            print("Copying library folder")
-            shutil.copytree(library_for_rocm_tempfiles_path, library_path, dirs_exist_ok=True)
-            print(f"Copied library folder to {library_path}")
-            self.status_label.config(text="ROCm libraries updated successfully")
-
-            # Display success message
-            self.status_label.config(
-                text="Installation complete. Please restart Ollama for changes to take effect."
-            )
-            shutil.rmtree(temp_dir)
-
+            shutil.copytree(library_src, library_path, dirs_exist_ok=True)
+            self.status_label.config(text="ROCm libraries updated successfully.")
+            messagebox.showinfo("Success", "Ollama has been updated successfully.\nPlease restart Ollama for changes to take effect.")
         except Exception as e:
             logging.error(f"Library extraction failed: {e}")
             self.status_label.config(text=f"Library extraction failed: {str(e)}")
             raise
+        finally:
+            shutil.rmtree(temp_dir)
 
     def fix_05Error(self):
         """Fix common 0xc0000005 error by copying libraries."""
-        self.status_label.config(text="Fixing 0xc0000005 Error...")
+        self.status_label.config(text="Attempting to fix 0xc0000005 Error...")
+        
+        ollama_base_path = self.find_ollama_path()
+        if not ollama_base_path:
+            self.status_label.config(text="Ollama not found. Aborted.")
+            return
 
         try:
-            source_dir = os.path.expandvars(
-                r"%LOCALAPPDATA%\Programs\Ollama\lib\ollama"
-            )
-            library_dir = os.path.expandvars(
-                r"%LOCALAPPDATA%\Programs\Ollama\lib\ollama\rocblas\library"
-            )
-            destination_dir = os.path.expandvars(
-                r"%LOCALAPPDATA%\Programs\Ollama\lib\ollama\runners\rocm_v6.2.4"
-            )
+            source_dir = os.path.join(ollama_base_path, "lib", "ollama")
+            dest_dir = os.path.join(source_dir, "runners", "rocm_v6.2.4")
 
-            # Create destination directory if it doesn't exist
-            os.makedirs(destination_dir, exist_ok=True)
-
-            # Copy main directory files
-            for filename in os.listdir(source_dir):
-                source_file = os.path.join(source_dir, filename)
-                if os.path.isfile(source_file):
-                    shutil.copy2(source_file, destination_dir)
-                    print(f"Copied {filename} to runners directory")
-
-            # Copy library files
-            if os.path.exists(library_dir):
-                library_path = os.path.join(destination_dir, "library")
-                os.makedirs(library_path, exist_ok=True)
-
-                for filename in os.listdir(library_dir):
-                    library_file = os.path.join(library_dir, filename)
-                    if os.path.isfile(library_file):
-                        shutil.copy2(library_file, library_path)
-                        print(f"Copied library file {filename}")
-
-            self.status_label.config(text="0xc0000005 Error fix applied successfully")
-
+            os.makedirs(dest_dir, exist_ok=True)
+            files_to_copy = [f for f in os.listdir(source_dir) if f.endswith(".dll")]
+            for filename in files_to_copy:
+                shutil.copy2(os.path.join(source_dir, filename), dest_dir)
+                logging.info(f"Copied {filename} to runners directory.")
+            self.status_label.config(text="0xc0000005 Error fix applied successfully.")
+            messagebox.showinfo("Success", "The fix has been applied. Please try running Ollama again.")
         except Exception as e:
             logging.error(f"Error fix failed: {e}")
             self.status_label.config(text=f"Error fix failed: {str(e)}")
-            raise
+            messagebox.showerror("Error", f"Applying the fix failed: {e}")
 
     def load_settings(self):
         """Load saved settings from file."""
@@ -616,29 +559,21 @@ class OllamaInstallerGUI:
         finally:
             self.master.destroy()
 
-
 def main():
     """Main entry point for the application."""
-    try:
-        if not is_admin():
-            if messagebox.askyesno(
-                "Insufficient Permissions",
-                "Administrator privileges are required.\nRestart as administrator?",
-            ):
-                restart_as_admin()
-            sys.exit()
+    if not is_admin():
+        if messagebox.askyesno("Administrator Privileges Required", "This application requires administrator privileges to modify program files.\nWould you like to restart as an administrator?"):
+            restart_as_admin()
+        return
 
+    try:
         root = tk.Tk()
         app = OllamaInstallerGUI(root)
         root.protocol("WM_DELETE_WINDOW", app.on_closing)
         root.mainloop()
     except Exception as e:
         logging.critical(f"Application failed to start: {e}", exc_info=True)
-        messagebox.showerror(
-            "Critical Error",
-            f"Application failed to start: {e}\nCheck logs for details.",
-        )
-
+        messagebox.showerror("Critical Error", f"Application failed to start: {e}\nCheck ollama_installer.log for details.")
 
 if __name__ == "__main__":
     main()
