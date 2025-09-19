@@ -28,19 +28,19 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-# GPU to ROCm library mapping - UPDATED with descriptive names
+# Shader ISA to ROCm library mapping - UPDATED with GPU names
 GPU_ROCM_MAPPING = {
-    "gfx90c-xnack- (Radeon Pro Vega)": "rocm.gfx90c-xnack-.for.hip.skd.6.2.4.7z",
-    "gfx1010/11/12 xnack (RX 5000 Series, e.g., 5700 XT)": "rocm.gfx1010-xnack-gfx1011-xnack-gfx1012-xnack-.for.hip.sdk.6.2.4.7z",
-    "gfx1010/12 no-xnack (RX 5000 Series, e.g., 5700 XT)": "rocm.gfx1010-gfx1012-for.hip.sdk.6.2.4.7z",
-    "gfx1031 (Radeon RX 6700 XT)": "rocm.gfx1031.for.hip.sdk.6.2.4.littlewu.s.logic.7z",
-    "gfx1032 (Radeon RX 6600 XT)": "rocm.gfx1032.for.hip.sdk.6.2.4.navi21.logic.7z",
-    "gfx1034/35/36 (APUs: Steam Deck, Ryzen 6000 'Rembrandt')": "rocm.gfx1034-gfx1035-gfx1036.for.hip.sdk.6.2.4.7z",
-    "gfx1103 (APUs: Ryzen 7040/8040 'Phoenix', e.g., 780M)": "rocm.gfx1103.AMD.780M.phoenix.V5.0.for.hip.sdk.6.2.4.7z",
-    "gfx1150 (APUs: Ryzen AI 300 'Strix Point')": "rocm.gfx1150.for.hip.skd.6.2.4.7z",
-    "gfx1151 (APUs: Ryzen AI 300 'Strix Point')": "rocm.gfx1151.for.hip.skd.6.2.4.7z",
-    "gfx1200 (Radeon 9000 Series 'Navi 48')": "rocm.gfx1200.for.rocm.6.2.4-no-optimized.7z",
-    "gfx1201 (Radeon 9000 Series 'Navi 44')": "rocm.gfx1201.for.hip.skd.6.2.4-no-optimized.7z"
+    "gfx90c-xnack- ('Renoir', 'Renoir-M', 'Lucienne', 'Cezanne', 'Cezanne-M', 'Barcelo')": "rocm.gfx90c-xnack-.for.hip.skd.6.2.4.7z",
+    "gfx1010/11/12 xnack- ('Navi 10', 'Navi 12', 'Navi 14')": "rocm.gfx1010-xnack-gfx1011-xnack-gfx1012-xnack-.for.hip.sdk.6.2.4.7z",
+    "gfx1010/12 without xnack- ('Navi 10', 'Navi 14')": "rocm.gfx1010-gfx1012-for.hip.sdk.6.2.4.7z",
+    "gfx1031 ('Navi 22')": "rocm.gfx1031.for.hip.sdk.6.2.4.littlewu.s.logic.7z",
+    "gfx1032 ('Navi 23')": "rocm.gfx1032.for.hip.sdk.6.2.4.navi21.logic.7z",
+    "gfx1034/35/36 ('Navi 24', 'Rembrandt', 'Rembrandt+', 'Raphael')": "rocm.gfx1034-gfx1035-gfx1036.for.hip.sdk.6.2.4.7z",
+    "gfx1103 ('Phoenix', 'Hawk Point', 'Phoenix2', e.g., 780M on Ryzen 7000/8000 series APUs)": "rocm.gfx1103.AMD.780M.phoenix.V5.0.for.hip.sdk.6.2.4.7z",
+    "gfx1150 ('Strix Point', e.g., 8X0M on Ryzen AI 300 series APUs)": "rocm.gfx1150.for.hip.skd.6.2.4.7z",
+    "gfx1151 ('Strix Halo', e.g., Radeon 8050S/8060S on Ryzen AI Max 300 series APUs)": "rocm.gfx1151.for.hip.skd.6.2.4.7z",
+    "gfx1200 ('Navi 48', e.g., Radeon RX 9070/9070 XT/9070 GRE)": "rocm.gfx1200.for.rocm.6.2.4-no-optimized.7z",
+    "gfx1201 ('Navi 44', e.g., Radeon RX 9060/9060 XT)": "rocm.gfx1201.for.hip.skd.6.2.4-no-optimized.7z"
 }
 
 
