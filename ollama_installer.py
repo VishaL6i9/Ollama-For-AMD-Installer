@@ -17,6 +17,9 @@ import webbrowser
 import winreg
 from typing import Dict, List, Optional, Tuple
 
+class APILimitRateError(Exception):
+    pass
+
 # Set up logging with more detailed configuration
 logging.basicConfig(
     filename="ollama_installer.log",
@@ -55,7 +58,7 @@ def is_admin() -> bool:
     """Check if the program is running with administrator privileges."""
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
+    except Exception:
         return False
 
 
@@ -72,9 +75,8 @@ class ProxySelector:
 
     DEFAULT_PROXIES = {
         "Default (No Proxy)": "",
-        "GHProxy": "https://ghproxy.com/",
+        "GHProxy": "https://ghfast.top/",
         "GitHub Mirror": "https://github.moeyy.xyz/",
-        "FastGit": "https://raw.fastgit.org/",
         "CF Worker": "https://gh.api.99988866.xyz/"
     }
 
@@ -134,7 +136,7 @@ class ProxySelector:
         """Update the proxy dropdown list."""
         proxy_list = list(self.proxies.keys())
         self.proxy_combo["values"] = proxy_list
-        if not self.selected_proxy.get() in proxy_list:
+        if self.selected_proxy.get() not in proxy_list:
             self.selected_proxy.set(proxy_list[0])
 
     def get_selected_proxy_url(self) -> Optional[str]:
@@ -218,7 +220,7 @@ class ProxySelector:
             self.master.after(0, self.proxy_combo.set, best_proxy)
             self.result_text.insert(tk.END, f"\nBest proxy: {best_proxy}\n")
             
-        self.result_text.insert(tk.END, f"Done!\n")
+        self.result_text.insert(tk.END, "Done!\n")
         self.result_text.see(tk.END)
 
     def update_result_display(self, name: str, response_time: float):
@@ -233,13 +235,16 @@ class OllamaInstallerGUI:
         """Initialize main application GUI."""
         self.master = master
         master.title("Ollama For AMD Installer")
-        master.geometry("700x650")
+        master.geometry("700x700")
         master.columnconfigure(0, weight=1)
 
         self.repo = "likelovewant/ollama-for-amd"
         self.base_url = f"https://github.com/{self.repo}/releases/download"
         self.github_url = "https://github.com/ByronLeeeee/Ollama-For-AMD-Installer"
         self.gpu_var = tk.StringVar()
+        self.github_access_token_placeholder = "e.g., ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+        self.github_access_token_var = tk.StringVar()
+
         self.create_widgets()
         self.proxy_selector = ProxySelector(master)
         self.load_settings()
@@ -266,9 +271,19 @@ class OllamaInstallerGUI:
         # --- Troubleshooting Frame ---
         troubleshoot_frame = ttk.LabelFrame(self.master, text="Troubleshooting", padding=(10, 5))
         troubleshoot_frame.grid(row=3, column=0, columnspan=2, pady=5, padx=10, sticky="ew")
-        troubleshoot_frame.columnconfigure(0, weight=1)
+        troubleshoot_frame.columnconfigure(1, weight=1)
         self.fix_button = ttk.Button(troubleshoot_frame, text="Fix 0xc0000005 Error", command=self.fix_05Error)
-        self.fix_button.grid(row=0, column=0, pady=5, padx=5, sticky="ew")
+        self.fix_button.grid(row=0, column=0, columnspan=2, pady=5, padx=5, sticky="ew")
+        ttk.Label(troubleshoot_frame, text="GitHub Personal Access Token:").grid(row=1, column=0, pady=5, sticky="w")
+        self.github_access_token_entry = ttk.Entry(troubleshoot_frame, textvariable=self.github_access_token_var)
+        self.github_access_token_entry.grid(row=1, column=1, pady=5, padx=5, sticky="ew")
+        # Placeholder logic
+        # self.github_access_token_entry.insert(0, self.github_access_token_placeholder)
+        self.github_access_token_var.set(self.github_access_token_placeholder)
+        self.github_access_token_entry.config(foreground="grey")
+        self.github_access_token_entry.bind("<FocusIn>", self.on_github_access_token_entry_focus_in)
+        self.github_access_token_entry.bind("<FocusOut>", self.on_github_access_token_entry_focus_out)
+        ttk.Label(troubleshoot_frame, text="GitHub Personal Access Token will NOT be used when using proxy.").grid(row=2, columnspan=2, pady=5, sticky="ew")
 
         # --- Status and Progress ---
         status_frame = ttk.Frame(self.master, padding=(10, 5))
@@ -333,6 +348,13 @@ class OllamaInstallerGUI:
         """Start version check in separate thread."""
         threading.Thread(target=self.check_version, daemon=True).start()
 
+    def show_API_rate_limit_messagebox(self):
+        messagebox.showerror(
+                "API Rate Limit Exceeded",
+                "GitHub limits unauthenticated requests to 60 per hour per IP address. \n" \
+                    "To avoid hitting this rate limit, you can use the GitHub Personal Access Token (PAT) for authentication."
+            )
+
     def check_version(self):
         """Check for new version and prompt for installation."""
         try:
@@ -340,16 +362,49 @@ class OllamaInstallerGUI:
             self.latest_version = self.get_latest_release()
             if messagebox.askyesno("Latest Version", f"Latest version found: {self.latest_version}\nDo you want to download and install now?"):
                 self.download_and_install()
+        except APILimitRateError:
+            self.show_API_rate_limit_messagebox()
+            self.status_label.config(text="Error checking version.")
         except Exception as e:
             logging.error(f"Version check failed: {e}")
             messagebox.showerror("Error", f"Version check failed: {e}")
             self.status_label.config(text="Error checking version.")
+    
+    def on_github_access_token_entry_focus_in(self, event):
+        """Handle focus in on GitHub Personal Access Token entry to remove placeholder."""
+        if self.github_access_token_entry.get() == self.github_access_token_placeholder:
+            self.github_access_token_var.set("")
+            self.github_access_token_entry.config(foreground="black")
+
+    def on_github_access_token_entry_focus_out(self, event):
+        """Handle focus out on GitHub Personal Access Token entry to restore placeholder if empty."""
+        if not self.github_access_token_entry.get():
+            self.github_access_token_var.set(self.github_access_token_placeholder)
+            self.github_access_token_entry.config(foreground="grey")
 
     def get_latest_release(self) -> str:
         """Get latest release version from GitHub API."""
         url = "https://api.github.com/repos/likelovewant/ollama-for-amd/releases/latest"
-        response = requests.get(url)
-        response.raise_for_status()
+
+        github_access_token = self.github_access_token_var.get().strip()
+        if github_access_token == self.github_access_token_placeholder:
+            github_access_token = ""
+
+        response = requests.get(
+            url=url,
+            headers={
+                "Authorization": f"Bearer {github_access_token}"
+            }
+            if github_access_token and not self.proxy_selector.get_selected_proxy_url()
+            else None,
+        )
+        if (response.status_code == 403 or response.status_code == 429) and (
+            response.headers["x-ratelimit-remaining"]
+            and int(response.headers["x-ratelimit-remaining"]) == 0
+        ):
+            raise APILimitRateError
+        else:
+            response.raise_for_status()
         return response.json()["tag_name"]
 
     def download_and_install(self):
@@ -367,6 +422,9 @@ class OllamaInstallerGUI:
             self.install_exe(exe_filename)
             self.status_label.config(text="Extracting and replacing libraries...")
             self.download_and_replace_rocblas()
+        except APILimitRateError:
+            self.show_API_rate_limit_messagebox()
+            self.status_label.config(text="Installation failed.")
         except Exception as e:
             logging.error(f"Installation failed: {e}")
             messagebox.showerror("Error", f"Installation failed: {e}")
@@ -375,8 +433,26 @@ class OllamaInstallerGUI:
     def download_file(self, url: str, filename: str):
         """Download file with progress tracking."""
         try:
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
+            github_access_token = self.github_access_token_var.get().strip()
+            if github_access_token == self.github_access_token_placeholder:
+                github_access_token = ""
+            
+            response = requests.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {github_access_token}"
+                }
+                if github_access_token and not self.proxy_selector.get_selected_proxy_url()
+                else None, 
+                stream=True
+            )
+            if (response.status_code == 403 or response.status_code == 429) and (
+                response.headers["x-ratelimit-remaining"]
+                and int(response.headers["x-ratelimit-remaining"]) == 0
+            ):
+                raise APILimitRateError
+            else:
+                response.raise_for_status()
             total_size = int(response.headers.get("content-length", 0))
             if total_size == 0:
                 raise ValueError("Content-Length header is missing or zero.")
@@ -459,6 +535,8 @@ class OllamaInstallerGUI:
                 self.status_label.config(text="ROCm libraries already downloaded.")
             self.status_label.config(text="Extracting and replacing libraries...")
             self.extract_and_replace_rocblas(rocm_zip_path)
+        except APILimitRateError:
+            self.show_API_rate_limit_messagebox()
         except Exception as e:
             logging.error(f"ROCm library replacement failed: {e}")
             messagebox.showerror("Error", f"ROCm library replacement failed: {e}")
