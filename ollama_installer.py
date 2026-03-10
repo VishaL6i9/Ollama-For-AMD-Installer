@@ -201,13 +201,14 @@ class OllamaInstallerGUI:
 
     def __init__(self, master):
         self.master = master
-        master.title("Ollama For AMD Installer (v0.16.1+ Ready)")
+        master.title("Ollama For AMD Installer")
         master.geometry("750x850")
 
-        # Apply modern clam theme if available
+        # Apply modern winnative theme if available
         style = ttk.Style()
-        if 'clam' in style.theme_names():
-            style.theme_use('clam')
+        print(style.theme_names())
+        if 'xpnative' in style.theme_names():
+            style.theme_use('xpnative')
 
         master.columnconfigure(0, weight=1)
         master.rowconfigure(4, weight=1)
