@@ -34,7 +34,7 @@ jobs:
         # --onefile: Bundles everything into a single .exe
         # --windowed: Hides the console window (GUI mode only)
         # --uac-admin: Embeds a manifest to automatically request Administrator privileges
-        pyinstaller --noconfirm --onefile --windowed --uac-admin --name "Ollama-For-AMD-Installer" Ollama-For-AMD-Installer.py
+        pyinstaller --noconfirm --onefile --windowed --uac-admin --name "Ollama-For-AMD-Installer" ollama_installer.py
 
     - name: Upload Artifact (For Manual Testing)
       if: github.event_name == 'workflow_dispatch'
