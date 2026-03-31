@@ -603,11 +603,17 @@ class OllamaInstallerGUI:
 
             self.kill_ollama()
             self.log_msg("Extracting framework...")
-            if os.path.exists(rocm_lib_dir):
-                shutil.rmtree(rocm_lib_dir, ignore_errors=True)
-            os.makedirs(rocm_lib_dir, exist_ok=True)
+            
+            temp_fw_dir = tempfile.mkdtemp()
             with py7zr.SevenZipFile(base_archive, 'r') as archive:
-                archive.extractall(path=rocm_lib_dir)
+                archive.extractall(path=temp_fw_dir)
+                
+            fw_extracted_root = os.path.join(temp_fw_dir, "windows-amd64")
+            if not os.path.exists(fw_extracted_root):
+                fw_extracted_root = temp_fw_dir
+                
+            shutil.copytree(fw_extracted_root, ollama_path, dirs_exist_ok=True)
+            shutil.rmtree(temp_fw_dir, ignore_errors=True)
 
             gpu_url = get_rocm_url(gpu_model)
             if not gpu_url:
