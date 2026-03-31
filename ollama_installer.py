@@ -406,6 +406,16 @@ class OllamaInstallerGUI:
         self.log_area.config(state="disabled")
         self.master.update_idletasks()
 
+    def _update_progress_sync(self, current_val, max_val):
+        if max_val > 0:
+            self.progress.configure(mode="determinate", maximum=max_val)
+            self.progress["value"] = current_val
+        else:
+            self.progress.configure(mode="indeterminate")
+
+    def _update_speed_sync(self, text):
+        self.speed_label.config(text=text)
+
     def _show_info(self, title, msg):
         self.master.after(0, messagebox.showinfo, title, msg)
 
@@ -675,24 +685,31 @@ class OllamaInstallerGUI:
             file_size = int(response.headers.get("content-length", 0))
             download_count = 0
             start_ts = time.time()
-            self.progress.configure(
-                mode="determinate", maximum=file_size if file_size > 0 else 100)
+            
+            self.master.after(0, self._update_progress_sync, 0, file_size if file_size > 0 else 100)
 
-            display_name = os.path.basename(
-                filename) if filename else "payload"
+            display_name = os.path.basename(filename) if filename else "payload"
 
-            with open(filename, "wb") as file_out, tqdm(total=file_size if file_size > 0 else None, unit="iB", unit_scale=True, desc=display_name, disable=(sys.stderr is None)) as pbar:
+            with open(filename, "wb") as file_out, tqdm(
+                total=file_size if file_size > 0 else None, 
+                unit="iB", 
+                unit_scale=True, 
+                desc=display_name, 
+                disable=(sys.stderr is None)
+            ) as pbar:
                 for segment in response.iter_content(chunk_size=8192):
                     if not segment:
                         continue
                     file_out.write(segment)
                     download_count += len(segment)
                     pbar.update(len(segment))
+                    
                     if file_size > 0:
-                        self.progress["value"] = download_count
+                        self.master.after(0, self._update_progress_sync, download_count, file_size)
+                    
                     self._update_speed(download_count, start_ts)
-                    self.master.update_idletasks()
-            self.speed_label.config(text="Download finished.")
+                    
+            self.master.after(0, self._update_speed_sync, "Download finished.")
         except Exception as e:
             self.log_msg(f"Network error: {e}")
             if os.path.exists(filename):
@@ -704,8 +721,8 @@ class OllamaInstallerGUI:
         duration = time.time() - start_time
         if duration > 0.5:
             mb_rate = (bytes_received / (1024 * 1024)) / duration
-            self.speed_label.config(
-                text=f"Rate: {mb_rate:.2f} MB/s | Transferred: {bytes_received/(1024*1024):.2f} MB")
+            text = f"Rate: {mb_rate:.2f} MB/s | Transferred: {bytes_received/(1024*1024):.2f} MB"
+            self.master.after(0, self._update_speed_sync, text)
 
     def set_ui_state(self, state):
         """Toggle availability of interactive interface elements."""
