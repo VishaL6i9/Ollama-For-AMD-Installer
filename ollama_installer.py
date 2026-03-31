@@ -62,9 +62,9 @@ def get_rocm_url(gpu_model: str) -> Optional[str]:
 def get_system_amd_gpus() -> List[str]:
     """Identify installed AMD GPUs using PowerShell."""
     try:
-        cmd = 'powershell "Get-CimInstance -ClassName Win32_VideoController | Select-Object -ExpandProperty Name"'
+        cmd = 'powershell -NoProfile "Get-CimInstance -ClassName Win32_VideoController | Select-Object -ExpandProperty Name"'
         output = subprocess.check_output(
-            cmd, shell=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW).strip()
+            cmd, shell=True, encoding='utf-8', errors='ignore', creationflags=subprocess.CREATE_NO_WINDOW).strip()
         gpus = [line.strip() for line in output.split('\n') if line.strip()]
         return [gpu for gpu in gpus if "AMD" in gpu.upper() or "RADEON" in gpu.upper()]
     except Exception as e:
@@ -396,12 +396,34 @@ class OllamaInstallerGUI:
     def log_msg(self, message: str):
         """Append a message to the UI console and the log file."""
         logging.info(message)
+        self.master.after(0, self._log_msg_sync, message)
+
+    def _log_msg_sync(self, message: str):
         self.log_area.config(state="normal")
         self.log_area.insert(
             tk.END, f"[{time.strftime('%H:%M:%S')}] {message}\n")
         self.log_area.see(tk.END)
         self.log_area.config(state="disabled")
         self.master.update_idletasks()
+
+    def _update_progress_sync(self, current_val, max_val):
+        if max_val > 0:
+            self.progress.configure(mode="determinate", maximum=max_val)
+            self.progress["value"] = current_val
+        else:
+            self.progress.configure(mode="indeterminate")
+
+    def _update_speed_sync(self, text):
+        self.speed_label.config(text=text)
+
+    def _show_info(self, title, msg):
+        self.master.after(0, messagebox.showinfo, title, msg)
+
+    def _show_warning(self, title, msg):
+        self.master.after(0, messagebox.showwarning, title, msg)
+
+    def _show_error(self, title, msg):
+        self.master.after(0, messagebox.showerror, title, msg)
 
     def detect_gpu(self):
         """Trigger automatic hardware identification."""
@@ -415,19 +437,36 @@ class OllamaInstallerGUI:
 
         detected_str = ", ".join(gpus)
         self.log_msg(f"Hardware found: {detected_str}")
-        matched_key = auto_match_gpu_to_key(gpus[0])
+        
+        matched_key = ""
+        matched_gpu_name = gpus[0]
+        
+        for gpu in gpus:
+            key = auto_match_gpu_to_key(gpu)
+            if key and key != "AMBIGUOUS_APU":
+                matched_key = key
+                matched_gpu_name = gpu
+                break
+                
+        if not matched_key:
+            for gpu in gpus:
+                key = auto_match_gpu_to_key(gpu)
+                if key == "AMBIGUOUS_APU":
+                    matched_key = key
+                    matched_gpu_name = gpu
+                    break
 
         if matched_key == "AMBIGUOUS_APU":
             messagebox.showwarning(
-                "Generic Device", "Integrated GPU detected.\nRyzen 7000+ -> gfx1103\nRyzen 6000 -> gfx1034")
+                "Generic Device", f"Integrated GPU detected: {matched_gpu_name}\nRyzen 7000+ -> gfx1103\nRyzen 6000 -> gfx1034")
         elif matched_key:
             self.gpu_var.set(matched_key)
             self.log_msg(f"Auto-selected: {matched_key}")
             messagebox.showinfo(
-                "GPU Identified", f"Device: {gpus[0]}\nProfile: {matched_key}")
+                "GPU Identified", f"Device: {matched_gpu_name}\nProfile: {matched_key}")
         else:
             messagebox.showinfo(
-                "GPU Identified", f"Device: {gpus[0]}\nPlease choose profile manually.")
+                "GPU Identified", f"Device: {matched_gpu_name}\nPlease choose profile manually.")
 
     def kill_ollama(self):
         """Close running Ollama instances to unlock system files."""
@@ -511,11 +550,11 @@ class OllamaInstallerGUI:
             winreg.CloseKey(reg_key)
             self.kill_ollama()
             self.log_msg("✅ Vulkan configuration complete.")
-            messagebox.showinfo(
+            self._show_info(
                 "Vulkan Enabled", "Settings applied. Please manually restart Ollama to take effect.")
         except Exception as e:
             self.log_msg(f"Registry operation failed: {e}")
-            messagebox.showerror("Error", f"Failed to update environment: {e}")
+            self._show_error("Error", f"Failed to update environment: {e}")
         finally:
             self.set_ui_state("normal")
 
@@ -533,7 +572,7 @@ class OllamaInstallerGUI:
             self._execute_replace_only()
         except Exception as e:
             self.log_msg(f"Installer error: {e}")
-            messagebox.showerror("Error", f"Setup failed: {e}")
+            self._show_error("Error", f"Setup failed: {e}")
         finally:
             self.set_ui_state("normal")
 
@@ -543,7 +582,7 @@ class OllamaInstallerGUI:
             self.set_ui_state("disabled")
             gpu_model = self.gpu_var.get()
             if not gpu_model:
-                messagebox.showwarning(
+                self._show_warning(
                     "Incomplete Input", "Select a GPU profile.")
                 return
 
@@ -596,12 +635,12 @@ class OllamaInstallerGUI:
                     rocm_lib_dir, "rocblas", "library"), dirs_exist_ok=True)
 
             self.log_msg("✅ Library injection successful.")
-            messagebox.showinfo(
+            self._show_info(
                 "Success", "Hardware acceleration libraries updated.")
             shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception as e:
             self.log_msg(f"Injection failure: {e}")
-            messagebox.showerror("Error", f"Process failed: {e}")
+            self._show_error("Error", f"Process failed: {e}")
         finally:
             self.set_ui_state("normal")
 
@@ -627,7 +666,7 @@ class OllamaInstallerGUI:
             for file_item in [f for f in os.listdir(base_lib) if f.endswith(".dll")]:
                 shutil.copy2(os.path.join(base_lib, file_item), final_dest)
             self.log_msg("✅ Fix deployment complete.")
-            messagebox.showinfo("Success", "0xc0000005 fix implemented.")
+            self._show_info("Success", "0xc0000005 fix implemented.")
         except Exception as e:
             self.log_msg(f"Fix failed: {e}")
         finally:
@@ -646,24 +685,31 @@ class OllamaInstallerGUI:
             file_size = int(response.headers.get("content-length", 0))
             download_count = 0
             start_ts = time.time()
-            self.progress.configure(
-                mode="determinate", maximum=file_size if file_size > 0 else 100)
+            
+            self.master.after(0, self._update_progress_sync, 0, file_size if file_size > 0 else 100)
 
-            display_name = os.path.basename(
-                filename) if filename else "payload"
+            display_name = os.path.basename(filename) if filename else "payload"
 
-            with open(filename, "wb") as file_out, tqdm(total=file_size if file_size > 0 else None, unit="iB", unit_scale=True, desc=display_name) as pbar:
+            with open(filename, "wb") as file_out, tqdm(
+                total=file_size if file_size > 0 else None, 
+                unit="iB", 
+                unit_scale=True, 
+                desc=display_name, 
+                disable=(sys.stderr is None)
+            ) as pbar:
                 for segment in response.iter_content(chunk_size=8192):
                     if not segment:
                         continue
                     file_out.write(segment)
                     download_count += len(segment)
                     pbar.update(len(segment))
+                    
                     if file_size > 0:
-                        self.progress["value"] = download_count
+                        self.master.after(0, self._update_progress_sync, download_count, file_size)
+                    
                     self._update_speed(download_count, start_ts)
-                    self.master.update_idletasks()
-            self.speed_label.config(text="Download finished.")
+                    
+            self.master.after(0, self._update_speed_sync, "Download finished.")
         except Exception as e:
             self.log_msg(f"Network error: {e}")
             if os.path.exists(filename):
@@ -675,11 +721,14 @@ class OllamaInstallerGUI:
         duration = time.time() - start_time
         if duration > 0.5:
             mb_rate = (bytes_received / (1024 * 1024)) / duration
-            self.speed_label.config(
-                text=f"Rate: {mb_rate:.2f} MB/s | Transferred: {bytes_received/(1024*1024):.2f} MB")
+            text = f"Rate: {mb_rate:.2f} MB/s | Transferred: {bytes_received/(1024*1024):.2f} MB"
+            self.master.after(0, self._update_speed_sync, text)
 
     def set_ui_state(self, state):
         """Toggle availability of interactive interface elements."""
+        self.master.after(0, self._set_ui_state_sync, state)
+
+    def _set_ui_state_sync(self, state):
         self.check_button.config(state=state)
         self.replace_button.config(state=state)
         self.vulkan_button.config(state=state)
