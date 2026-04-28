@@ -18,7 +18,7 @@ import winreg
 from typing import Dict, Optional, List
 
 # Version constant
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 
 
 class APILimitRateError(Exception):
